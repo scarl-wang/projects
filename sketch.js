@@ -31,18 +31,16 @@ const DIALOGUES = {
   ],
 };
 
-let dialogueIndices = {
-  far: 0,
-  near: 0,
-  touch: 0,
-  leaving: 0,
-};
-
+let dialogueIndices = { far: 0, near: 0, touch: 0, leaving: 0 };
 let currentLine = "";
 let dialogueTimer = 0;
 let lastZone = null;
 let leavingTimer = 0;
-const LEAVING_DURATION = 3000; // ms to show leaving dialogue before returning to normal
+const LEAVING_DURATION = 2000;
+
+const TOUCH_ON = 1000;
+const TOUCH_OFF = 900;
+let isTouching = false;
 
 // ------------------------------------------------
 // SETUP
@@ -61,31 +59,41 @@ function draw() {
   textFont("Courier New");
   textSize(32);
 
-  const dist = window.getDistance();
-  const zone = getZone(dist);
+  const dist = window.getDistance ? window.getDistance() : null;
+  const touchRaw = window.getTouchValue ? window.getTouchValue() : null;
 
-  // Check if we just left the touch zone
+  // Hysteresis latch — only flip on clear threshold crossings
+  if (touchRaw !== null) {
+    if (!isTouching && touchRaw > TOUCH_ON) isTouching = true;
+    if (isTouching && touchRaw < TOUCH_OFF) isTouching = false;
+  }
+
+  const zone = isTouching ? "touch" : getZone(dist);
+
+  // Push TOUCHING + ZONE up to the debug panel every frame
+  if (window.updateZoneLabel) {
+    window.updateZoneLabel(zone.toUpperCase(), isTouching);
+  }
+
+  // Detect leaving touch zone
   if (lastZone === "touch" && zone !== "touch") {
     triggerLeaving();
   }
 
-  // Zone change → immediate dialogue update (skip if leaving is active)
+  // Zone change → immediate dialogue update (skip if leaving)
   if (zone !== lastZone && !isLeaving()) {
     updateDialogue(zone);
     lastZone = zone;
   } else if (zone !== lastZone) {
-    lastZone = zone; // still track zone but don't override leaving dialogue
+    lastZone = zone;
   }
 
-  // Periodic dialogue refresh (every 3s while active, skip if leaving)
+  // Periodic dialogue refresh every 3s
   if (zone !== "none" && !isLeaving() && millis() - dialogueTimer > 3000) {
     updateDialogue(zone);
   }
 
-  // Display Logic — use leaving visuals while leaving timer is active
   const displayZone = isLeaving() ? "leaving" : zone;
-
-  window.updateZoneLabel(displayZone.toUpperCase());
 
   if (displayZone === "touch") {
     drawLowResFace();
@@ -104,21 +112,36 @@ function draw() {
     drawStatic();
     drawUI();
   }
+
+  // ---- ON-CANVAS DEBUG (top-left corner) ----
+  noStroke();
+  fill(0, 180, 0);
+  textAlign(LEFT);
+  textSize(11);
+  textFont("Courier New");
+  const td = dist !== null ? dist.toFixed(1) : "null";
+  const tt = touchRaw !== null ? touchRaw : "null";
+  text(
+    "dist=" +
+      td +
+      "  raw=" +
+      tt +
+      "  touching=" +
+      isTouching +
+      "  zone=" +
+      zone,
+    10,
+    height - 14,
+  );
 }
 
 // ------------------------------------------------
 // LEAVING STATE
 // ------------------------------------------------
 function triggerLeaving() {
-  // Use sequential logic for leaving too
-  let zone = "leaving";
-  let index = dialogueIndices[zone];
-
-  currentLine = DIALOGUES[zone][index];
-
-  // Increment and wrap
-  dialogueIndices[zone] = (index + 1) % DIALOGUES[zone].length;
-
+  let index = dialogueIndices["leaving"];
+  currentLine = DIALOGUES["leaving"][index];
+  dialogueIndices["leaving"] = (index + 1) % DIALOGUES["leaving"].length;
   leavingTimer = millis();
   dialogueTimer = millis();
 }
@@ -128,13 +151,13 @@ function isLeaving() {
 }
 
 // ------------------------------------------------
-// DISTANCE & STATE
+// DISTANCE → ZONE
 // ------------------------------------------------
 function getZone(d) {
   if (d === null) return "none";
-  if (d < 3 || d > 1000) return "touch";
   if (d < 100) return "near";
-  return "far";
+  if (d > 100) return "far";
+  return "none";
 }
 
 // ------------------------------------------------
@@ -145,32 +168,37 @@ function updateDialogue(zone) {
     currentLine = "";
     return;
   }
-
-  // Get current index for this specific zone
   let index = dialogueIndices[zone];
-
-  // Set the text
   currentLine = DIALOGUES[zone][index];
-
-  // Move to next index, wrap back to 0 if at the end of array
   dialogueIndices[zone] = (index + 1) % DIALOGUES[zone].length;
-
   dialogueTimer = millis();
 }
 
 // ------------------------------------------------
-// KEYBOARD TESTING  (a = FAR, b = CLOSE, c = TOUCH)
+// KEYBOARD TESTING  a=far  b=near  c=touch  d=none
 // ------------------------------------------------
+let _testDist = null;
+let _testTouch = 0;
+
 function keyPressed() {
   if (key === "a") {
-    distance = 500;
-  } else if (key === "b") {
-    distance = 50;
-  } else if (key === "c") {
-    distance = 3000;
+    _testDist = 50;
+    _testTouch = 0;
   }
-
-  window.getDistance = () => distance;
+  if (key === "b") {
+    _testDist = 15;
+    _testTouch = 0;
+  }
+  if (key === "c") {
+    _testDist = null;
+    _testTouch = 1100;
+  }
+  if (key === "d") {
+    _testDist = null;
+    _testTouch = 0;
+  }
+  window.getDistance = () => _testDist;
+  window.getTouchValue = () => _testTouch;
 }
 
 // ------------------------------------------------
